@@ -1,0 +1,95 @@
+{
+  "timezone": "America/Denver",
+  "state_file": "/tmp/oracle-orchestrator-state.json",
+  "oracle": {
+    "binary": "oracle",
+    "engine": "browser",
+    "model": "gpt-5.2-pro",
+    "preflight": {
+      "enabled": false,
+      "remote_host": "127.0.0.1:9473",
+      "start_command": "",
+      "wait_seconds": 30,
+      "check_interval_seconds": 2
+    },
+    "extra_args": [
+      "--remote-host",
+      "127.0.0.1:9473",
+      "--remote-token",
+      "static_token"
+    ]
+  },
+  "relay": {
+    "method": "amp",
+    "amp_script": "plugin/plugins/ai-maestro/scripts/amp-send.sh",
+    "from_agent": "ops-oracle-relay"
+  },
+  "routes": {
+    "review": {
+      "profile_name": "gpt-project-review",
+      "instruction": "You are a strict reviewer. Return concise, actionable findings with assumptions and confidence.",
+      "output_schema": "oracle_review_v1",
+      "files": [
+        "README.md",
+        "docs/PERSONAL-NOTEBOOK.md",
+        "scripts/**",
+        "!**/*.png",
+        "!**/*.jpg"
+      ]
+    },
+    "risk": {
+      "profile_name": "gpt-project-risk",
+      "instruction": "Focus on risks, failure modes, and prevention. Rank by severity.",
+      "output_schema": "oracle_risk_v1",
+      "files": [
+        "README.md",
+        "docs/**",
+        "scripts/**"
+      ]
+    },
+    "planning": {
+      "profile_name": "gpt-project-planning",
+      "instruction": "Produce an implementation-ready plan with constraints and test strategy.",
+      "output_schema": "oracle_plan_v1",
+      "files": [
+        "README.md",
+        "docs/PERSONAL-NOTEBOOK.md"
+      ]
+    },
+    "fallback": {
+      "profile_name": "gpt-project-general",
+      "instruction": "Answer directly. Be explicit about unknowns.",
+      "output_schema": "oracle_general_v1",
+      "files": [
+        "README.md"
+      ]
+    }
+  },
+  "jobs": {
+    "daily": [
+      {
+        "id": "eod-review",
+        "enabled": false,
+        "route": "review",
+        "target_agent": "project-dev",
+        "subject": "EOD review summary",
+        "objective": "Summarize top issues, key decisions, and immediate next actions for tomorrow.",
+        "context_command": "git status --short && git log --oneline -n 10"
+      }
+    ],
+    "threshold": [
+      {
+        "id": "high-failure-risk",
+        "enabled": false,
+        "route": "risk",
+        "target_agent": "project-review",
+        "subject": "Threshold alert: high failure risk",
+        "objective": "Analyze current failure signal and recommend mitigations.",
+        "metric_command": "echo 0",
+        "operator": ">=",
+        "threshold": 5,
+        "cooldown_minutes": 60
+      }
+    ]
+  }
+}

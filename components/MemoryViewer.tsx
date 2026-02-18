@@ -60,6 +60,36 @@ interface MemoryStats {
   }
 }
 
+interface BackfillReport {
+  success: boolean
+  mode: 'dry-run' | 'apply'
+  total_discovered: number
+  total_matched: number
+  total_unmapped: number
+  total_existing: number
+  total_inserted: number
+  truncated: boolean
+  max_files_applied: number
+  working_directories: string[]
+  active_sessions_seen: number
+  sources: {
+    claude: {
+      discovered: number
+      matched: number
+      unmapped: number
+      existing: number
+      inserted: number
+    }
+    codex: {
+      discovered: number
+      matched: number
+      unmapped: number
+      existing: number
+      inserted: number
+    }
+  }
+}
+
 interface MemoryViewerProps {
   agentId: string
   hostUrl?: string
@@ -104,6 +134,15 @@ export default function MemoryViewer({ agentId, hostUrl = '', isActive = false }
     success: boolean
     memoriesCreated?: number
     memoriesReinforced?: number
+    error?: string
+  } | null>(null)
+  const [backfilling, setBackfilling] = useState(false)
+  const [backfillError, setBackfillError] = useState<string | null>(null)
+  const [backfillReport, setBackfillReport] = useState<BackfillReport | null>(null)
+  const [indexDeltaStatus, setIndexDeltaStatus] = useState<{
+    success: boolean
+    indexed?: number
+    skipped?: number
     error?: string
   } | null>(null)
 
@@ -202,6 +241,77 @@ export default function MemoryViewer({ agentId, hostUrl = '', isActive = false }
     }
   }
 
+  const runBackfillDryRun = async () => {
+    setBackfilling(true)
+    setBackfillError(null)
+    setIndexDeltaStatus(null)
+    try {
+      const response = await fetch(`${hostUrl}/api/agents/${agentId}/memory/backfill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: true }),
+      })
+      const data = await response.json()
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Backfill preview failed')
+      }
+      setBackfillReport(data as BackfillReport)
+    } catch (error) {
+      setBackfillError(error instanceof Error ? error.message : 'Backfill preview failed')
+      setBackfillReport(null)
+    } finally {
+      setBackfilling(false)
+    }
+  }
+
+  const applyBackfill = async () => {
+    const shouldApply = confirm('Apply memory backfill now? This will insert historical sessions into this agent memory index.')
+    if (!shouldApply) return
+
+    setBackfilling(true)
+    setBackfillError(null)
+    setIndexDeltaStatus(null)
+    try {
+      const response = await fetch(`${hostUrl}/api/agents/${agentId}/memory/backfill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: false }),
+      })
+      const data = await response.json()
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Backfill apply failed')
+      }
+      setBackfillReport(data as BackfillReport)
+
+      const indexResponse = await fetch(`${hostUrl}/api/agents/${agentId}/index-delta`, {
+        method: 'POST',
+      })
+      const indexData = await indexResponse.json()
+      if (!indexResponse.ok || !indexData.success) {
+        setIndexDeltaStatus({
+          success: false,
+          error: indexData.error || 'index-delta failed',
+        })
+      } else {
+        setIndexDeltaStatus({
+          success: true,
+          indexed: indexData.indexed,
+          skipped: indexData.skipped,
+        })
+      }
+
+      await fetchMemories()
+      await fetchStats()
+      if (view === 'graph') {
+        await fetchGraph()
+      }
+    } catch (error) {
+      setBackfillError(error instanceof Error ? error.message : 'Backfill apply failed')
+    } finally {
+      setBackfilling(false)
+    }
+  }
+
   // Only fetch when this agent is active (prevents API flood with many agents)
   useEffect(() => {
     if (!isActive) return
@@ -290,27 +400,130 @@ export default function MemoryViewer({ agentId, hostUrl = '', isActive = false }
             </div>
           </div>
         </div>
-        <button
-          onClick={triggerConsolidation}
-          disabled={consolidating}
-          className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-600/50 text-white rounded-lg font-medium text-sm transition-all"
-        >
-          {consolidating ? (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={runBackfillDryRun}
+            disabled={backfilling}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-600/50 text-white rounded-lg font-medium text-sm transition-all"
+            title="Preview and import past Claude/Codex sessions for this agent"
+          >
+            {backfilling ? (
+              <>
+                <div className="animate-spin">
+                  <RefreshCw className="w-4 h-4" />
+                </div>
+                Backfill...
+              </>
+            ) : (
+              <>
+                <ArrowRight className="w-4 h-4" />
+                Backfill Memory
+              </>
+            )}
+          </button>
+          <button
+            onClick={triggerConsolidation}
+            disabled={consolidating}
+            className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-600/50 text-white rounded-lg font-medium text-sm transition-all"
+          >
+            {consolidating ? (
+              <>
+                {/* Wrap SVG in div for hardware-accelerated animation */}
+                <div className="animate-spin">
+                  <RefreshCw className="w-4 h-4" />
+                </div>
+                Consolidating...
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4" />
+                Consolidate Now
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Backfill Status */}
+      {(backfillError || backfillReport || indexDeltaStatus) && (
+        <div className="p-3 rounded-lg border border-indigo-500/20 bg-indigo-500/5 space-y-3">
+          {backfillError && (
+            <div className="flex items-center gap-2 text-sm text-red-400">
+              <AlertCircle className="w-4 h-4" />
+              <span>{backfillError}</span>
+            </div>
+          )}
+
+          {backfillReport && (
             <>
-              {/* Wrap SVG in div for hardware-accelerated animation */}
-              <div className="animate-spin">
-                <RefreshCw className="w-4 h-4" />
+              <div className="text-sm text-gray-200 font-medium">
+                Backfill {backfillReport.mode === 'dry-run' ? 'Preview' : 'Applied'}
               </div>
-              Consolidating...
-            </>
-          ) : (
-            <>
-              <Play className="w-4 h-4" />
-              Consolidate Now
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+                <div className="bg-gray-800/60 border border-gray-700 rounded px-2 py-1 text-gray-300">
+                  discovered: <span className="text-gray-100">{backfillReport.total_discovered}</span>
+                </div>
+                <div className="bg-gray-800/60 border border-gray-700 rounded px-2 py-1 text-gray-300">
+                  matched: <span className="text-gray-100">{backfillReport.total_matched}</span>
+                </div>
+                <div className="bg-gray-800/60 border border-gray-700 rounded px-2 py-1 text-gray-300">
+                  unmapped: <span className="text-gray-100">{backfillReport.total_unmapped}</span>
+                </div>
+                <div className="bg-gray-800/60 border border-gray-700 rounded px-2 py-1 text-gray-300">
+                  existing: <span className="text-gray-100">{backfillReport.total_existing}</span>
+                </div>
+                <div className="bg-gray-800/60 border border-gray-700 rounded px-2 py-1 text-gray-300">
+                  inserted: <span className="text-gray-100">{backfillReport.total_inserted}</span>
+                </div>
+              </div>
+              {backfillReport.mode === 'dry-run' && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={applyBackfill}
+                    disabled={backfilling}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-600/50 text-white rounded-lg text-sm font-medium transition-all"
+                  >
+                    {backfilling ? (
+                      <>
+                        <div className="animate-spin">
+                          <RefreshCw className="w-4 h-4" />
+                        </div>
+                        Applying...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-4 h-4" />
+                        Apply Backfill
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setBackfillReport(null)
+                      setBackfillError(null)
+                      setIndexDeltaStatus(null)
+                    }}
+                    className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-gray-300 rounded-lg text-sm hover:bg-gray-700 transition-all"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
             </>
           )}
-        </button>
-      </div>
+
+          {indexDeltaStatus && (
+            <div className={`text-sm flex items-center gap-2 ${indexDeltaStatus.success ? 'text-green-400' : 'text-amber-400'}`}>
+              {indexDeltaStatus.success ? <TrendingUp className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+              <span>
+                {indexDeltaStatus.success
+                  ? `Index delta complete: indexed ${indexDeltaStatus.indexed || 0}, skipped ${indexDeltaStatus.skipped || 0}`
+                  : `Index delta warning: ${indexDeltaStatus.error || 'unknown error'}`}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Consolidation Result */}
       {consolidationResult && (

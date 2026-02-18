@@ -1,0 +1,119 @@
+{
+  "timezone": "America/Denver",
+  "state_file": "/tmp/oracle-orchestrator-state.json",
+  "oracle": {
+    "binary": "oracle",
+    "engine": "browser",
+    "model": "gpt-5.2-pro",
+    "preflight": {
+      "enabled": true,
+      "remote_host": "10.0.0.81:9473",
+      "start_command": "cmd.exe /c start \"\" \"%ProgramFiles%\\Git\\bin\\bash.exe\" -lc \"orcs\"",
+      "wait_seconds": 35,
+      "check_interval_seconds": 2
+    },
+    "extra_args": [
+      "--remote-host",
+      "10.0.0.81:9473",
+      "--remote-token",
+      "static_token",
+      "--force"
+    ]
+  },
+  "relay": {
+    "method": "amp",
+    "amp_script": "plugin/plugins/ai-maestro/scripts/amp-send.sh",
+    "from_agent": "ops-oracle-relay"
+  },
+  "routes": {
+    "review": {
+      "profile_name": "gpt-project-review",
+      "instruction": "You are a strict project reviewer. Prioritize execution risk, unresolved blockers, and concrete next actions.",
+      "output_schema": "oracle_review_v1",
+      "files": [
+        "README.md",
+        "docs/PERSONAL-NOTEBOOK.md",
+        "docs/**/*.md",
+        "app/**",
+        "components/**",
+        "hooks/**",
+        "lib/**",
+        "types/**",
+        "scripts/**",
+        "server.mjs",
+        "package.json"
+      ]
+    },
+    "risk": {
+      "profile_name": "gpt-project-risk",
+      "instruction": "Focus on delivery risks, failure modes, and mitigation. Rank by severity and likely impact this week.",
+      "output_schema": "oracle_risk_v1",
+      "files": [
+        "docs/**",
+        "scripts/**",
+        "app/**",
+        "components/**",
+        "hooks/**",
+        "lib/**",
+        "server.mjs",
+        "package.json"
+      ]
+    },
+    "planning": {
+      "profile_name": "gpt-project-planning",
+      "instruction": "Produce an implementation-ready plan with constraints and test strategy.",
+      "output_schema": "oracle_plan_v1",
+      "files": [
+        "README.md",
+        "docs/PERSONAL-NOTEBOOK.md"
+      ]
+    },
+    "fallback": {
+      "profile_name": "gpt-project-general",
+      "instruction": "Answer directly. Be explicit about unknowns.",
+      "output_schema": "oracle_general_v1",
+      "files": [
+        "README.md"
+      ]
+    }
+  },
+  "jobs": {
+    "daily": [
+      {
+        "id": "daily-project-brief",
+        "enabled": true,
+        "route": "review",
+        "target_agent": "clients-acme-frontend",
+        "subject": "Daily project brief",
+        "objective": "Create an execution-focused project brief: top priorities, active risks, what to ship next, and clear owner-style next actions.",
+        "context_command": "echo \"repo=$(basename \\\"$(pwd)\\\")\" && echo \"branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)\" && echo \"changed_files=$(git status --porcelain | wc -l | tr -d ' ')\" && echo \"todo_count=$(if command -v rg >/dev/null 2>&1; then rg -n 'TODO|FIXME|HACK' --glob '!node_modules/**' --glob '!.next/**' . | wc -l | tr -d ' '; else grep -RInE 'TODO|FIXME|HACK' . 2>/dev/null | wc -l | tr -d ' '; fi)\" && echo \"\" && git status --short && echo \"\" && git log --oneline -n 12"
+      }
+    ],
+    "threshold": [
+      {
+        "id": "change-load-high",
+        "enabled": true,
+        "route": "risk",
+        "target_agent": "clients-acme-frontend",
+        "subject": "Threshold alert: high change load",
+        "objective": "Assess whether current change volume creates integration/review risk and suggest how to reduce delivery risk immediately.",
+        "metric_command": "git status --porcelain | wc -l | tr -d ' '",
+        "operator": ">=",
+        "threshold": 25,
+        "cooldown_minutes": 240
+      },
+      {
+        "id": "todo-density-high",
+        "enabled": true,
+        "route": "risk",
+        "target_agent": "clients-acme-frontend",
+        "subject": "Threshold alert: TODO/FIXME density high",
+        "objective": "Analyze technical debt signal from TODO/FIXME/HACK markers and propose a focused cleanup sequence with minimal delivery disruption.",
+        "metric_command": "if command -v rg >/dev/null 2>&1; then rg -n 'TODO|FIXME|HACK' --glob '!node_modules/**' --glob '!.next/**' . | wc -l | tr -d ' '; else grep -RInE 'TODO|FIXME|HACK' . 2>/dev/null | wc -l | tr -d ' '; fi",
+        "operator": ">=",
+        "threshold": 120,
+        "cooldown_minutes": 720
+      }
+    ]
+  }
+}

@@ -156,6 +156,8 @@ Custom avatars, personality profiles, and visual presence for every agent. When 
 
 **Getting Started:** [Quick Start](./docs/QUICKSTART.md) · [Core Concepts](./docs/CONCEPTS.md) · [Use Cases](./docs/USE-CASES.md)
 
+**Personal Workflow:** [Personal Notebook](./docs/PERSONAL-NOTEBOOK.md)
+
 **Multi-Machine:** [Setup Tutorial](./docs/SETUP-TUTORIAL.md) · [Network Access](./docs/NETWORK-ACCESS.md)
 
 **Agent Communication:** [Messaging Guide](./docs/AGENT-MESSAGING-GUIDE.md) · [Architecture](./docs/AGENT-COMMUNICATION-ARCHITECTURE.md)
